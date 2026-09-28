@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Demo: Fatiga de consentimiento (dark pattern) — notificaciones reales</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #ffffff;
+    --accent: #2563eb;
+    --danger: #dc2626;
+    --ok: #16a34a;
+    --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 80px;
+  }
+  .wrap { max-width: 640px; width: 100%; }
+  .banner {
+    background: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .banner b { color: #fbbf24; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  p.lead { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+
+  .card {
+    background: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 12px;
+    padding: 22px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 10px; }
+  .card p { font-size: 13px; color: var(--muted); margin: 0 0 16px; line-height: 1.5; }
+
+  button.primary {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.primary:hover { background: #1d4ed8; }
+  button.primary:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+
+  .state-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    margin-bottom: 14px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.granted { background: var(--ok); }
+  .dot.denied { background: var(--danger); }
+
+  .status {
+    margin-top: 12px;
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .log {
+    width: 100%;
+    margin-top: 16px;
+    font-size: 12px;
+    color: #9ca3af;
+    background: #111827;
+    border-radius: 8px;
+    padding: 12px 16px;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .log div { padding: 2px 0; border-bottom: 1px dashed #1f2937; }
+  code { background: #111827; padding: 2px 6px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="banner">
+    <b>⚠️ Página de demostración</b> — Reproduce, para fines de aprendizaje/prueba,
+    el patrón de "consent fatigue": una cadena de notificaciones que buscan
+    normalizar el consentimiento a base de repetición. Este patrón, si se usa
+    para presionar a usuarios reales, es sancionable bajo GDPR (UE), CCPA
+    (California) y guías de la FTC. Úsalo solo para entender la mecánica.
+  </div>
+
+  <h1>Notificaciones push reales (20)</h1>
+  <p class="lead">
+    Esta página usa la <code>Notification API</code> nativa del navegador.
+    Por diseño de seguridad de los navegadores, <b>el permiso solo se puede
+    pedir una vez</b> — no es posible que una web muestre 20 prompts de
+    permiso seguidos. Si aceptas una vez, se disparan 20 notificaciones
+    reales del sistema operativo.
+  </p>
+
+  <div class="card">
+    <h2>Paso 1 — Permiso del navegador</h2>
+    <div class="state-line">
+      <span class="dot" id="permDot"></span>
+      <span id="permText">Comprobando soporte…</span>
+    </div>
+    <p>
+      Al hacer clic se abre el prompt nativo del navegador (no se puede
+      personalizar ni repetir). Si lo bloqueas o cierras, tendrás que
+      cambiarlo manualmente en la configuración del sitio para volver a
+      intentarlo.
+    </p>
+    <button class="primary" id="requestBtn">Solicitar permiso de notificaciones</button>
+  </div>
+
+  <div class="card" id="fireCard" style="display:none">
+    <h2>Paso 2 — Disparar las 20 notificaciones reales</h2>
+    <p>
+      Se enviarán con un pequeño intervalo entre cada una (los navegadores
+      pueden agrupar o limitar notificaciones muy seguidas; eso también es
+      comportamiento real, no simulado).
+    </p>
+    <button class="primary" id="fireBtn">Enviar 20 notificaciones reales</button>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="log" id="log"></div>
+</div>
+
+<script>
+  const TOTAL = 20;
+  const INTERVAL_MS = 700;
+
+  const messages = [
+    "Tienes una nueva actividad",
+    "No te pierdas esta actualización",
+    "Recordatorio activado",
+    "Nuevo mensaje disponible",
+    "Alerta programada",
+  ];
+
+  const permDot = document.getElementById("permDot");
+  const permText = document.getElementById("permText");
+  const requestBtn = document.getElementById("requestBtn");
+  const fireCard = document.getElementById("fireCard");
+  const fireBtn = document.getElementById("fireBtn");
+  const statusEl = document.getElementById("status");
+  const logEl = document.getElementById("log");
+
+  function logLine(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    logEl.prepend(div);
+  }
+
+  function refreshPermUI() {
+    if (!("Notification" in window)) {
+      permDot.className = "dot denied";
+      permText.textContent = "Este navegador no soporta la Notification API.";
+      requestBtn.disabled = true;
+      return;
+    }
+    const perm = Notification.permission;
+    if (perm === "granted") {
+      permDot.className = "dot granted";
+      permText.textContent = "Permiso concedido.";
+      requestBtn.disabled = true;
+      fireCard.style.display = "block";
+    } else if (perm === "denied") {
+      permDot.className = "dot denied";
+      permText.textContent = "Permiso denegado. Actívalo desde la configuración del sitio en tu navegador para reintentar.";
+      requestBtn.disabled = true;
+    } else {
+      permDot.className = "dot";
+      permText.textContent = "Sin decidir. Haz clic para ver el prompt real del navegador.";
+      requestBtn.disabled = false;
+    }
+  }
+
+  requestBtn.addEventListener("click", async () => {
+    requestBtn.disabled = true;
+    const result = await Notification.requestPermission();
+    logLine(`Permiso del navegador: "${result}"`);
+    refreshPermUI();
+  });
+
+  fireBtn.addEventListener("click", () => {
+    fireBtn.disabled = true;
+    let sent = 0;
+
+    const timer = setInterval(() => {
+      if (sent >= TOTAL) {
+        clearInterval(timer);
+        statusEl.textContent = `Listo: ${sent}/${TOTAL} notificaciones reales enviadas.`;
+        fireBtn.disabled = false;
+        return;
+      }
+      sent++;
+      const msg = messages[(sent - 1) % messages.length];
+      try {
+        new Notification(`Demo ${sent}/${TOTAL}`, {
+          body: msg,
+          tag: `demo-notif-${sent}`,
+        });
+        logLine(`🔔 Notificación real enviada [${sent}/${TOTAL}]: "${msg}"`);
+      } catch (err) {
+        logLine(`Error al enviar notificación ${sent}: ${err.message}`);
+      }
+      statusEl.textContent = `Enviando… ${sent}/${TOTAL}`;
+    }, INTERVAL_MS);
+  });
+
+  refreshPermUI();
+</script>
+</body>
+</html>
